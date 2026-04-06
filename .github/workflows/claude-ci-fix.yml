@@ -1,0 +1,110 @@
+# Auto-fix CI failures using Claude Code with Bedrock
+name: Claude CI Auto-Fix
+
+on:
+  workflow_run:
+    workflows:
+      - "Linux Build and Test"
+      - "CIBuildWheel"
+      - "Check License Header"
+    types:
+      - completed
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  auto-fix:
+    if: ${{ github.event.workflow_run.conclusion == 'failure' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout failing branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_branch }}
+          fetch-depth: 10
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Guard against infinite loops
+        id: guard
+        run: |
+          LAST_MSG=$(git log -1 --pretty=%s)
+          if [[ "$LAST_MSG" == "fix(ci):"* ]]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "::warning::Skipping auto-fix: last commit was already an auto-fix"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Fetch failure logs
+        if: steps.guard.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "Failed workflow: ${{ github.event.workflow_run.name }}"
+          echo "Run ID: ${{ github.event.workflow_run.id }}"
+          echo "Branch: ${{ github.event.workflow_run.head_branch }}"
+          echo "---"
+          gh run view ${{ github.event.workflow_run.id }} --log-failed 2>&1 | tail -500 > /tmp/failure_logs.txt
+          echo "Captured $(wc -l < /tmp/failure_logs.txt) lines of failure logs"
+
+      - name: Setup Node.js
+        if: steps.guard.outputs.skip != 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install Claude Code
+        if: steps.guard.outputs.skip != 'true'
+        run: npm install -g @anthropic-ai/claude-code
+
+      - name: Build Claude prompt
+        if: steps.guard.outputs.skip != 'true'
+        run: |
+          cat > /tmp/claude_prompt.txt <<EOF
+          You are analyzing a CI failure in the ScalableVectorSearch project.
+
+          Failed workflow: ${{ github.event.workflow_run.name }}
+          Branch: ${{ github.event.workflow_run.head_branch }}
+          Commit: ${{ github.event.workflow_run.head_sha }}
+
+          Failure logs (last 500 lines):
+          EOF
+          cat /tmp/failure_logs.txt >> /tmp/claude_prompt.txt
+          cat >> /tmp/claude_prompt.txt <<EOF
+
+          Instructions:
+          1. Analyze the failure logs to identify the root cause.
+          2. Find the relevant source files and understand the issue.
+          3. Make the MINIMAL fix needed to resolve the CI failure.
+          4. Do NOT fix unrelated issues or refactor surrounding code.
+          5. Do NOT modify CI workflow files unless the failure is in the workflow itself.
+          EOF
+
+      - name: Analyze and fix with Claude
+        if: steps.guard.outputs.skip != 'true'
+        env:
+          CLAUDE_CODE_USE_BEDROCK: "1"
+          AWS_REGION: ${{ secrets.AWS_REGION }}
+          AWS_BEARER_TOKEN_BEDROCK: ${{ secrets.AWS_BEARER_TOKEN_BEDROCK }}
+        run: |
+          claude -p "$(cat /tmp/claude_prompt.txt)" \
+            --allowedTools "Edit,Read,Glob,Grep,Bash" \
+            --yes
+
+      - name: Commit and push fix
+        if: steps.guard.outputs.skip != 'true'
+        run: |
+          git config user.name "claude-ci-bot"
+          git config user.email "claude-ci-bot@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "::notice::No changes made - Claude could not determine a fix"
+            exit 0
+          fi
+          git commit -m "fix(ci): auto-fix failure in ${{ github.event.workflow_run.name }}"
+          git push origin HEAD:${{ github.event.workflow_run.head_branch }}
+          echo "::notice::Fix committed and pushed successfully"
