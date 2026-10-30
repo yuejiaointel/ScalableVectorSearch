@@ -510,14 +510,14 @@ CATCH_TEST_CASE(
 
     // Runs the filtered search; `found` = number of non-padding ids per query.
     auto search_filtered = [&](auto& results,
-                               const std::function<bool(size_t)>& pred,
+                               const std::function<bool(size_t)>& filter,
                                std::vector<size_t>& found) {
         index.search(
             results.view(),
             queries.cview(),
             sp,
             svs::lib::Returns(svs::lib::Const<false>()),
-            &pred
+            &filter
         );
         found.assign(num_queries, 0);
         for (size_t q = 0; q < num_queries; ++q) {
@@ -527,13 +527,13 @@ CATCH_TEST_CASE(
         }
     };
 
-    // Brute force over live ids passing `pred`.
+    // Brute force over live ids passing `filter`.
     std::unordered_set<size_t> deleted;
-    auto brute_force = [&](size_t q, auto&& pred) {
+    auto brute_force = [&](size_t q, auto&& filter) {
         std::vector<std::pair<float, size_t>> all;
         for (size_t i = 0; i < n; ++i) {
             size_t e = ids[i];
-            if (deleted.contains(e) || !pred(e)) {
+            if (deleted.contains(e) || !filter(e)) {
                 continue;
             }
             float d = 0;
@@ -551,21 +551,21 @@ CATCH_TEST_CASE(
         return out;
     };
 
-    auto check = [&](auto&& pred, bool expect_full) {
+    auto check = [&](auto&& filter, bool expect_full) {
         auto results = svs::QueryResult<size_t>(num_queries, k);
         std::vector<size_t> found;
-        search_filtered(results, pred, found);
+        search_filtered(results, filter, found);
         CATCH_REQUIRE(found.size() == num_queries);
         size_t hits = 0, total = 0;
         for (size_t q = 0; q < num_queries; ++q) {
-            auto gt = brute_force(q, pred);
+            auto gt = brute_force(q, filter);
             CATCH_REQUIRE(found[q] <= k);
             if (expect_full) {
                 CATCH_REQUIRE(found[q] == k);
             }
             for (size_t j = 0; j < found[q]; ++j) {
                 size_t id = results.index(q, j);
-                CATCH_REQUIRE(pred(id));
+                CATCH_REQUIRE(filter(id));
                 CATCH_REQUIRE(!deleted.contains(id));
                 hits += std::count(gt.begin(), gt.end(), id);
             }

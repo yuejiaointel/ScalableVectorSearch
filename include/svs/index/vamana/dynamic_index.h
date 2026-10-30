@@ -94,24 +94,24 @@ inline constexpr std::string_view name(SlotMetadata metadata) {
 
 class ValidBuilder {
   public:
-    // Optional `pred` (with `translator`): an entry is also invalid if `pred(external_id)`
+    // Optional `filter` (with `translator`): an entry is also invalid if `filter(external_id)`
     // is false. Invalid entries are navigated through but never returned.
     ValidBuilder(
         const std::vector<SlotMetadata>& status,
         const IDTranslator* translator = nullptr,
-        const std::function<bool(size_t)>* pred = nullptr
+        const std::function<bool(size_t)>* filter = nullptr
     )
         : status_{status}
         , translator_{translator}
-        , pred_{pred} {}
+        , filter_{filter} {}
 
     template <typename I>
     constexpr PredicatedSearchNeighbor<I> operator()(I i, float distance) const {
         bool invalid = getindex(status_, i) == SlotMetadata::Deleted;
         // This neighbor should be skipped if the metadata corresponding to the given index
         // marks this slot as deleted.
-        if (!invalid && pred_ != nullptr) {
-            invalid = !(*pred_)(translator_->get_external(i));
+        if (!invalid && filter_ != nullptr) {
+            invalid = !(*filter_)(translator_->get_external(i));
         }
         return PredicatedSearchNeighbor<I>(i, distance, !invalid);
     }
@@ -119,7 +119,7 @@ class ValidBuilder {
   private:
     const std::vector<SlotMetadata>& status_;
     const IDTranslator* translator_;
-    const std::function<bool(size_t)>* pred_;
+    const std::function<bool(size_t)>* filter_;
 };
 
 template <graphs::MemoryGraph Graph, typename Data, typename Dist>
@@ -589,17 +589,17 @@ class MutableVamanaIndex {
 
     // Return a `greedy_search` compatible builder for this index.
     // This is an internal method, mostly used to help implement the batch iterator.
-    ValidBuilder internal_search_builder(const std::function<bool(size_t)>* pred = nullptr
+    ValidBuilder internal_search_builder(const std::function<bool(size_t)>* filter = nullptr
     ) const {
-        return ValidBuilder{status_, &translator_, pred};
+        return ValidBuilder{status_, &translator_, filter};
     }
 
     auto greedy_search_closure(
         GreedySearchPrefetchParameters prefetch_parameters,
         const lib::DefaultPredicate& cancel = lib::Returns(lib::Const<false>()),
-        const std::function<bool(size_t)>* pred = nullptr
+        const std::function<bool(size_t)>* filter = nullptr
     ) const {
-        return [&, prefetch_parameters, pred](
+        return [&, prefetch_parameters, filter](
                    const auto& query, auto& accessor, auto& distance, auto& buffer
                ) {
             // Perform the greedy search using the provided resources.
@@ -611,7 +611,7 @@ class MutableVamanaIndex {
                 distance,
                 buffer,
                 vamana::EntryPointInitializer<Idx>{lib::as_const_span(entry_point_)},
-                internal_search_builder(pred),
+                internal_search_builder(filter),
                 prefetch_parameters,
                 cancel
             );
@@ -644,9 +644,9 @@ class MutableVamanaIndex {
         const Queries& queries,
         const search_parameters_type& sp,
         const lib::DefaultPredicate& cancel = lib::Returns(lib::Const<false>()),
-        const std::function<bool(size_t)>* pred = nullptr
+        const std::function<bool(size_t)>* filter = nullptr
     ) {
-        // Optional `pred`: only entries whose external id passes are returned. It is called
+        // Optional `filter`: only entries whose external id passes are returned. It is called
         // from all search threads. Rows with fewer passing entries than requested are
         // padded with id `size_t(-1)` and the worst score.
         threads::parallel_for(
@@ -680,11 +680,11 @@ class MutableVamanaIndex {
                         cancel
                     );
                 };
-                auto search = greedy_search_closure(prefetch_parameters, cancel, pred);
-                if (pred == nullptr) {
+                auto search = greedy_search_closure(prefetch_parameters, cancel, filter);
+                if (filter == nullptr) {
                     run(search);
                 } else {
-                    run(extensions::FilteredSearch<decltype(search)>{search, pred});
+                    run(extensions::FilteredSearch<decltype(search)>{search, filter});
                 }
             }
         );
