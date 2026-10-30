@@ -94,8 +94,9 @@ inline constexpr std::string_view name(SlotMetadata metadata) {
 
 class ValidBuilder {
   public:
-    // Optional `filter` (with `translator`): an entry is also invalid if `filter(external_id)`
-    // is false. Invalid entries are navigated through but never returned.
+    // Optional `filter` (with `translator`): an entry is also invalid if
+    // `filter(external_id)` is false. Invalid entries are navigated through but never
+    // returned.
     ValidBuilder(
         const std::vector<SlotMetadata>& status,
         const IDTranslator* translator = nullptr,
@@ -589,8 +590,8 @@ class MutableVamanaIndex {
 
     // Return a `greedy_search` compatible builder for this index.
     // This is an internal method, mostly used to help implement the batch iterator.
-    ValidBuilder internal_search_builder(const std::function<bool(size_t)>* filter = nullptr
-    ) const {
+    ValidBuilder
+    internal_search_builder(const std::function<bool(size_t)>* filter = nullptr) const {
         return ValidBuilder{status_, &translator_, filter};
     }
 
@@ -599,9 +600,9 @@ class MutableVamanaIndex {
         const lib::DefaultPredicate& cancel = lib::Returns(lib::Const<false>()),
         const std::function<bool(size_t)>* filter = nullptr
     ) const {
-        return [&, prefetch_parameters, filter](
-                   const auto& query, auto& accessor, auto& distance, auto& buffer
-               ) {
+        return [&,
+                prefetch_parameters,
+                filter](const auto& query, auto& accessor, auto& distance, auto& buffer) {
             // Perform the greedy search using the provided resources.
             greedy_search(
                 graph_,
@@ -646,9 +647,9 @@ class MutableVamanaIndex {
         const lib::DefaultPredicate& cancel = lib::Returns(lib::Const<false>()),
         const std::function<bool(size_t)>* filter = nullptr
     ) {
-        // Optional `filter`: only entries whose external id passes are returned. It is called
-        // from all search threads. Rows with fewer passing entries than requested are
-        // padded with id `size_t(-1)` and the worst score.
+        // Optional `filter`: only entries whose external id passes are returned. It is
+        // called from all search threads. Rows with fewer passing entries than requested
+        // are padded with id `size_t(-1)` and the worst score.
         threads::parallel_for(
             threadpool_,
             threads::StaticPartition{queries.size()},
